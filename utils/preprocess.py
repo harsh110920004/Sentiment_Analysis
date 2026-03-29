@@ -2,6 +2,7 @@ import nltk
 import string
 from nltk.corpus import stopwords
 
+//Preprocessing updated
 def preprocess(text):
     text = text.lower()
     text = "".join([c for c in text if c not in string.punctuation])
