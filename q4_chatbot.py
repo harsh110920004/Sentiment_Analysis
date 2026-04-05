@@ -1,89 +1,58 @@
-import nltk
+import pandas as pd
 import string
 from nltk.corpus import stopwords
 
-# -------------------------------
-# NLP Preprocessing
-# -------------------------------
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+
+df = pd.read_csv("reviews.csv")
+
 def preprocess(text):
     text = text.lower()
     text = "".join([c for c in text if c not in string.punctuation])
     words = text.split()
+    words = [w for w in words if w not in stopwords.words('english')]
+    return " ".join(words)
 
-    clean_words = []
-    for w in words:
-        if w not in stopwords.words('english'):
-            clean_words.append(w)
+df['clean'] = df['review'].apply(preprocess)
 
-    return clean_words
+vectorizer = TfidfVectorizer(ngram_range=(1,2))
+X = vectorizer.fit_transform(df['clean'])
+y = df['sentiment']
 
-# -------------------------------
-# Intents with multiple keywords
-# -------------------------------
-intents = {
-    "greeting": {
-        "keywords": ["hello", "hi", "hey"],
-        "response": "Hello! I can help you with NLP and AI topics."
-    },
-    "nlp": {
-        "keywords": ["nlp", "language", "processing"],
-        "response": "NLP (Natural Language Processing) enables computers to understand and process human language."
-    },
-    "ai": {
-        "keywords": ["ai", "artificial", "intelligence"],
-        "response": "AI allows machines to learn, reason, and make decisions similar to humans."
-    },
-    "applications": {
-        "keywords": ["application", "use", "uses", "where", "applied"],
-        "response": "AI is used in healthcare, finance, chatbots, recommendation systems, and self-driving cars."
-    },
-    "difference": {
-        "keywords": ["difference", "between", "nlp", "ai"],
-        "response": "AI is a broad field, while NLP is a subfield of AI focused on language understanding."
-    },
-    "chatbot": {
-        "keywords": ["chatbot", "bot"],
-        "response": "A chatbot is an AI application that interacts with users using natural language."
-    }
-}
+model = MultinomialNB()
+model.fit(X, y)
 
-# -------------------------------
-# Improved Intent Matching
-# -------------------------------
-def get_response(user_input):
-    words = preprocess(user_input)
+ranking = df.groupby('product')['sentiment'].value_counts().unstack().fillna(0)
+ranking['score'] = ranking.get('Positive',0) - ranking.get('Negative',0)
 
-    best_intent = None
-    max_score = 0
+best_product = ranking['score'].idxmax()
+worst_product = ranking['score'].idxmin()
 
-    for intent in intents:
-        keywords = intents[intent]["keywords"]
-        score = 0
+def predict(text):
+    text_clean = preprocess(text)
+    vec = vectorizer.transform([text_clean])
+    return model.predict(vec)[0]
 
-        for i in range(len(words)):
-            if words[i] in keywords:
-                score += 1
-
-        if score > max_score:
-            max_score = score
-            best_intent = intent
-
-    if best_intent is not None and max_score > 0:
-        return intents[best_intent]["response"]
-    else:
-        return "Sorry, I didn't understand. Please ask about NLP or AI."
-
-# -------------------------------
-# Chat Loop
-# -------------------------------
-print("Chatbot Ready! (type 'exit' to quit)\n")
+print("Chatbot: Ask anything about products, reviews, or type 'exit'")
 
 while True:
-    user_input = input("You: ")
+    user = input("You: ")
+    user_lower = user.lower()
 
-    if user_input.lower() == "exit":
-        print("Bot: Goodbye!")
+    if "exit" in user_lower:
+        print("Chatbot: Goodbye!")
         break
 
-    response = get_response(user_input)
-    print("Bot:", response)
+    elif any(word in user_lower for word in ["best", "top", "recommend"]):
+        print("Chatbot: Best product is", best_product)
+
+    elif any(word in user_lower for word in ["worst", "bad product", "not good product"]):
+        print("Chatbot: Worst product is", worst_product)
+
+    elif any(word in user_lower for word in ["which product", "suggest", "buy"]):
+        print("Chatbot: I recommend", best_product)
+
+    else:
+        sentiment = predict(user)
+        print("Chatbot: This sounds", sentiment)
