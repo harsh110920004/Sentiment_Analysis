@@ -5,54 +5,133 @@ from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 
-df = pd.read_csv("reviews.csv")
+# ---------- LOAD DATA ----------
+df = pd.read_csv("reviews.csv", low_memory=False)
+
+# Use 15,000 rows
+df = df.sample(15000, random_state=42)
+
+# Select required columns
+df = df[["name", "reviews.text", "reviews.rating"]]
+df.columns = ["product", "review", "rating"]
+
+# Drop missing values
+df.dropna(inplace=True)
+
+# ---------- SENTIMENT ----------
+def get_sentiment(rating):
+    if rating >= 4:
+        return "positive"
+    elif rating <= 2:
+        return "negative"
+    else:
+        return "neutral"
+
+df["sentiment"] = df["rating"].apply(get_sentiment)
+
+# Remove neutral
+df = df[df["sentiment"] != "neutral"]
+
+# ---------- BALANCE DATA ----------
+pos = df[df["sentiment"] == "positive"]
+neg = df[df["sentiment"] == "negative"]
+
+min_len = min(len(pos), len(neg))
+
+df = pd.concat([
+    pos.sample(min_len, random_state=42),
+    neg.sample(min_len, random_state=42)
+])
+
+# ---------- PREPROCESS ----------
+stop_words = set(stopwords.words("english"))
 
 def preprocess(text):
-    text = text.lower()
-    text = "".join([c for c in text if c not in string.punctuation])
-    words = text.split()
-    words = [w for w in words if w not in stopwords.words('english')]
-    return " ".join(words)
+    text = str(text).lower()
+    text = "".join(c for c in text if c not in string.punctuation)
+    return " ".join(w for w in text.split() if w not in stop_words)
 
-df['clean'] = df['review'].apply(preprocess)
+df["clean_review"] = df["review"].apply(preprocess)
 
-vectorizer = TfidfVectorizer(ngram_range=(1,2))
-X = vectorizer.fit_transform(df['clean'])
-y = df['sentiment']
+# ---------- VECTORIZE ----------
+vectorizer = TfidfVectorizer(
+    max_features=7000,
+    ngram_range=(1,2),
+    min_df=2
+)
 
+X = vectorizer.fit_transform(df["clean_review"])
+y = df["sentiment"]
+
+# ---------- TRAIN MODEL ----------
 model = MultinomialNB()
 model.fit(X, y)
 
-ranking = df.groupby('product')['sentiment'].value_counts().unstack().fillna(0)
-ranking['score'] = ranking.get('Positive',0) - ranking.get('Negative',0)
+# ---------- PRODUCT ANALYSIS ----------
+product_ratings = df.groupby("product")["rating"].mean()
 
-best_product = ranking['score'].idxmax()
-worst_product = ranking['score'].idxmin()
+best_product = product_ratings.idxmax()
+worst_product = product_ratings.idxmin()
 
-def predict(text):
-    text_clean = preprocess(text)
-    vec = vectorizer.transform([text_clean])
-    return model.predict(vec)[0]
+# ---------- CHATBOT ----------
+def chatbot():
+    print("\nProduct Review Chatbot (type 'exit' to quit)\n")
 
-print("Chatbot: Ask anything about products, reviews, or type 'exit'")
+    while True:
+        user = input("You: ").lower()
 
-while True:
-    user = input("You: ")
-    user_lower = user.lower()
+        if user == "exit":
+            print("Bot: Goodbye")
+            break
 
-    if "exit" in user_lower:
-        print("Chatbot: Goodbye!")
-        break
+        # ---------- INTENT FIX ----------
+        elif "best" in user:
+            print("Bot: Best reviewed product is:", best_product)
 
-    elif any(word in user_lower for word in ["best", "top", "recommend"]):
-        print("Chatbot: Best product is", best_product)
+        elif "worst" in user:
+            print("Bot: Worst reviewed product is:", worst_product)
 
-    elif any(word in user_lower for word in ["worst", "bad product", "not good product"]):
-        print("Chatbot: Worst product is", worst_product)
+        # ---------- SMART PRODUCT SEARCH ----------
+        elif "review" in user or "about" in user:
+            found = False
 
-    elif any(word in user_lower for word in ["which product", "suggest", "buy"]):
-        print("Chatbot: I recommend", best_product)
+            for product in df["product"].unique():
+                if any(word in product.lower() for word in user.split()):
+                    reviews = df[df["product"] == product]
 
-    else:
-        sentiment = predict(user)
-        print("Chatbot: This sounds", sentiment)
+                    print("\nBot: Showing reviews for", product, ":\n")
+                    print(reviews[["review", "sentiment"]].head(5))
+
+                    avg = reviews["rating"].mean()
+                    print("Average Rating:", round(avg, 2))
+
+                    found = True
+                    break
+
+            if not found:
+                print("Bot: Product not found in dataset")
+
+        # ---------- NEGATION FIX ----------
+        elif "not bad" in user:
+            print("Bot: This review sounds positive")
+
+        elif "not good" in user:
+            print("Bot: This review sounds negative")
+
+        # ---------- RULE BASE ----------
+        elif any(word in user for word in ["bad", "worst", "terrible", "poor"]):
+            print("Bot: This review sounds negative")
+
+        elif any(word in user for word in ["good", "excellent", "amazing", "great", "awesome"]):
+            print("Bot: This review sounds positive")
+
+        # ---------- ML ----------
+        else:
+            clean = preprocess(user)
+            vec = vectorizer.transform([clean])
+            pred = model.predict(vec)[0]
+
+            print("Bot: This review sounds", pred)
+
+# ---------- RUN ----------
+chatbot()
